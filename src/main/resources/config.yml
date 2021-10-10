@@ -1,0 +1,12 @@
+# Database
+host: "127.0.0.1"
+port: "3306"
+database: "testdb"
+username: "root"
+password: "root"
+
+# How many coins can players gain daily
+defaultLimit: 1000
+# Permission for VIP:
+# coins.vip
+vipLimit: 1500

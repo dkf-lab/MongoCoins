@@ -1,0 +1,18 @@
+name: Coins
+version: ${project.version}
+main: me.dkflab.coins.Coins
+api-version: 1.17
+commands:
+  sell:
+    description: Sells item in hand
+    usage: /sell
+  sellall:
+    description: Sells all items in inventory
+    usage: /sellall
+  coins:
+    description: Shows balance
+    aliases: [points, balance, bal]
+    usage: /<command>
+  rwt:
+    description: Removes player from whitelist
+    permission: coins.admin
