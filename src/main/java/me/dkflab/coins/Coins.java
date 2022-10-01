@@ -1,158 +1,163 @@
 package me.dkflab.coins;
 
-import me.dkflab.coins.listeners.PlayerJoin;
-import me.dkflab.coins.managers.DataManager;
-import me.dkflab.coins.managers.SQLInterface;
+import com.mongodb.*;
+import com.mongodb.async.SingleResultCallback;
+import com.mongodb.client.MongoClient;
+import com.mongodb.client.MongoClients;
+import com.mongodb.client.MongoCollection;
+import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.result.UpdateResult;
+import me.dkflab.coins.listeners.PlayerListener;
+import me.dkflab.coins.objects.MongoPlayer;
+import org.bson.Document;
 import org.bukkit.Bukkit;
-import org.bukkit.Material;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
-import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
+import java.util.function.Consumer;
+
+import static com.mongodb.client.model.Filters.eq;
+import static com.mongodb.client.model.Updates.combine;
+import static com.mongodb.client.model.Updates.set;
+import static me.dkflab.coins.Utils.*;
 
 public final class Coins extends JavaPlugin implements CommandExecutor {
 
-    public SQLInterface sql;
-    public DataManager data;
-    public HashMap<Player, Integer> dailyProfit = new HashMap<>();
-    private long time;
+    private Map<UUID, MongoPlayer> map = new HashMap<>();
+    private Map<UUID, Integer> coins = new HashMap<>();
 
+    private MongoClient mongoClient;
     @Override
     public void onEnable() {
-        time = System.currentTimeMillis();
         saveDefaultConfig();
-        // Events
-        getServer().getPluginManager().registerEvents(new PlayerJoin(this),this);
-        this.sql = new SQLInterface(this);
-
+        // Listeners
+        Bukkit.getPluginManager().registerEvents(new PlayerListener(this),this);
+        // Database Setup
         try {
-            sql.connect();
+            mongoClient = MongoClients.create(getConfig().getString("connection"));
         } catch (Exception e) {
             Bukkit.getLogger().severe("Database not connected!");
             Bukkit.getLogger().severe("Disabling plugin!");
             getServer().getPluginManager().disablePlugin(this);
+            return;
         }
+        // Cache database
+        readDatabase();
+    }
 
-        if (sql.isConnected()) {
-            Bukkit.getLogger().info("Database connected");
-            sql.createTable();
+    public void readDatabase() {
+        MongoDatabase database = mongoClient.getDatabase("coins");
+        MongoCollection<Document> col = database.getCollection("data");
+        col.find().forEach((Consumer<Document>) document -> {
+            map.put(UUID.fromString(document.getString("uuid")), new MongoPlayer(document.getString("name"), document.getInteger("coins")));
+            coins.put(UUID.fromString(document.getString("uuid")),document.getInteger("coins"));
+        });
+        getLogger().info(map.toString());
+    }
+
+    public void updatePlayer(Player player) {
+        MongoDatabase database = mongoClient.getDatabase("coins");
+        MongoCollection<Document> col = database.getCollection("data");
+        // Check if player is not part of database
+        if (!map.containsKey(player.getUniqueId())) {
+            // Player is not in cached DB
+            // Therefore, we need to write them
+            writePlayer(player, database, col);
+            return;
         }
+        // We can now update the document as the player is in the DB
+        col.updateOne(
+                eq("uuid", player.getUniqueId().toString()),
+                combine(set("name", player.getName()),
+                        set("coins", coins.get(player.getUniqueId()))));
+    }
 
-        data = new DataManager(this);
+    public int getPlayerCoins(Player player) {
+        return coins.get(player.getUniqueId());
+    }
+
+    public void setPlayerCoins(Player player, int coins) {
+        this.coins.put(player.getUniqueId(),coins);
+        updatePlayer(player);
+    }
+
+    public void addPlayerCoins(Player player, int amount) {
+        this.coins.put(player.getUniqueId(), getPlayerCoins(player) + amount);
+        updatePlayer(player);
+    }
+
+    public void subtractPlayerCoins(Player player, int amount) {
+        int f = getPlayerCoins(player) - amount;
+        if (f < 0) {
+            f = 0;
+        }
+        this.coins.put(player.getUniqueId(), f);
+        updatePlayer(player);
+    }
+
+    public void writePlayer(Player player, MongoDatabase db, MongoCollection<Document> col) {
+        // This function is for writing a new player document
+        getLogger().info("Writing player " + player.getName());
+        Document data = new Document("uuid", player.getUniqueId().toString())
+                .append("name",player.getName())
+                .append("coins",0);
+        col.insertOne(data);
+        coins.put(player.getUniqueId(),0);
     }
 
     @Override
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command, @NotNull String label, @NotNull String[] args) {
-        if (command.getName().equalsIgnoreCase("sell")) {
-            if (!(sender instanceof Player)) {
-                sender.sendMessage(Utils.color("&cYou need to be a player!"));
-                return true;
-            }
-            Player p = (Player)sender;
-            sellItem(p, p.getInventory().getItemInMainHand());
-        }
-
-        if (command.getName().equalsIgnoreCase("sellall")) {
-            if (!(sender instanceof Player)) {
-                Utils.color("&cYou need to be a player!");
-                return true;
-            }
-            Player p = (Player)sender;
-            for (ItemStack i : p.getInventory().getContents()) {
-                if (i != null) {
-                    if (!i.getType().equals(Material.AIR)) {
-                        if (goneOverLimit(p)) {
-                            p.sendMessage(Utils.color("&cYou have reached your daily sell limit!"));
-                            return true;
-                        }
-                        sellItem(p,i);
+        if (command.getName().equalsIgnoreCase("coins")) {
+            // coins <set> <player> <amount>
+            if (args.length == 3) {
+                if (!sender.hasPermission("coins.admin")) {
+                    noPerms(sender);
+                    return true;
+                }
+                if (!args[0].equalsIgnoreCase("set")) {
+                    help(sender);
+                    return true;
+                }
+                String playerName = args[1];
+                Player p = null;
+                for (Player all : Bukkit.getOnlinePlayers()) {
+                    if (all.getName().equalsIgnoreCase(playerName)) {
+                        p = all;
                     }
                 }
-            }
-        }
-
-        if (command.getName().equalsIgnoreCase("coins")) {
-            if (!(sender instanceof Player)) {
-                Utils.color("&cYou need to be a player!");
+                if (p == null) {
+                    error(sender, "Can't find player " + playerName + ". Are they online?");
+                } else {
+                    // We found our player
+                    if (parseInt(sender,args[2])) {
+                        setPlayerCoins(p, Integer.parseInt(args[2]));
+                        success(sender, "Set player " + p.getName() + " coins to " + args[2] + "!");
+                    }
+                }
                 return true;
             }
-            Player p = (Player)sender;
-            p.sendMessage(Utils.color("&aYou have &c" + sql.getPoints(p.getUniqueId()) + "&a points!"));
+            balance(sender);
         }
-
-        if (command.getName().equalsIgnoreCase("rwt")) {
-            if (args.length != 1) {
-                sender.sendMessage("Usage: /rwt <player>");
-                return true;
-            }
-            sql.removePlayerJoinTime(args[0]);
-            sender.sendMessage(Utils.color("&aIf the username was written CaSe SenSitIvE and exists, it has been removed from the database table."));
-        }
-
         return true;
     }
 
-    private void sellItem(Player p, ItemStack item) {
-        String name = item.getI18NDisplayName();
-        Material m = item.getType();
-        if (m.equals(Material.AIR)) {
-            p.sendMessage(Utils.color("&cYou need to be holding an item!"));
-            return;
-        }
-        int points = 0;
-        points = data.getConfig().getInt(m.toString());
-        if (points == 0) {
-            p.sendMessage(Utils.color("&cYou cannot sell this item!"));
-            return;
-        }
-        int finalpoints = 0;
-        int amount = item.getAmount();
-        for (int i = 0; i < amount; i++) {
-            if (goneOverLimit(p)) {
-                if (amount - item.getAmount() != 0) {
-                    p.sendMessage(Utils.color("&aYou sold &e" + (amount - item.getAmount()) + "x " + name + "&a for &e" + finalpoints + "&a!"));
-                }
-                p.sendMessage(Utils.color("&cYou have reached your daily sell limit!"));
-                return;
-            }
-            item.setAmount(item.getAmount()-1);
-            finalpoints += points;
-            sql.addPoints(p.getUniqueId(),points);
-        }
-        p.sendMessage(Utils.color("&aYou sold &e" + amount + "x " + name + "&a for &e" + finalpoints + "&a!"));
-    }
-
-    private boolean goneOverLimit(Player p) {
-        checkForReset();
-        dailyProfit.putIfAbsent(p,0);
-        int profitAllowed;
-        if (p.hasPermission("coins.vip")) {
-            profitAllowed = getConfig().getInt("vipLimit");
+    private void balance(CommandSender sender) {
+        if (!(sender instanceof Player)) {
+            notPlayer(sender);
         } else {
-            profitAllowed = getConfig().getInt("defaultLimit");
+            sendMessage(sender,"&7You have &a" + getPlayerCoins((Player)sender) + "&7 coins!");
         }
-        if (dailyProfit.get(p) >= profitAllowed) {
-            return true;
-        }
-        return false;
     }
 
-    public void addPoints(UUID uuid, int points) {
-        Player p = Bukkit.getPlayer(uuid);
-        dailyProfit.putIfAbsent(p,0);
-        dailyProfit.put(p, dailyProfit.get(p)+points);
-    }
-
-    private void checkForReset() {
-        if (System.currentTimeMillis() - time >= 86400000) {
-            dailyProfit = null;
-            time = System.currentTimeMillis();
-        }
+    private void help(CommandSender s) {
+        info(s,"&bCoins Help");
+        info(s,"/coins set <player> <amount>");
     }
 }

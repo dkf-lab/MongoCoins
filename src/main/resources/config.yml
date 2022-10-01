@@ -1,12 +1,3 @@
 # Database
-host: "127.0.0.1"
-port: "3306"
-database: "testdb"
-username: "root"
-password: "root"
-
-# How many coins can players gain daily
-defaultLimit: 1000
-# Permission for VIP:
-# coins.vip
-vipLimit: 1500
+pw: "uYWwab3B6FfKiTc3"
+connection: "mongodb+srv://coins:uYWwab3B6FfKiTc3@coinsdb.bbaepcc.mongodb.net/?retryWrites=true&w=majority"

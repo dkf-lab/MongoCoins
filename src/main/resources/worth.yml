@@ -1,9 +1,0 @@
-# Change prices of items here
-# If an items price is 0 or an item is not on this list you won't be able to sell it
-# Get names of enums from: https://hub.spigotmc.org/javadocs/spigot/org/bukkit/Material.html
-# Remember to use ALL CAPS, underscores, etc. If the formatting is not correct,
-# IT WILL NOT WORK!
-# Material Enum : Price
-ACACIA_LOG: 10
-APPLE: 10
-BARREL: 10
