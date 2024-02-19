@@ -1,3 +1,3 @@
 # Database
-pw: "uYWwab3B6FfKiTc3"
-connection: "mongodb+srv://coins:uYWwab3B6FfKiTc3@coinsdb.bbaepcc.mongodb.net/?retryWrites=true&w=majority"
+pw: "your-database-password"
+connection: "mongodb+srv://coins:user@mongodb.net/?retryWrites=true&w=majority"
